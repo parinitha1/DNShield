@@ -1,0 +1,9 @@
+scapy
+fastapi
+uvicorn
+pandas
+scikit-learn
+joblib
+shap
+pymongo
+geoip2
