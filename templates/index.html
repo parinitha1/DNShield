@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DNS Shield — Intrusion Detection</title>
+
+  <!-- Tailwind CSS (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ── Design system ──────────────────────────────────────────────────── */
+    :root {
+      --bg:       #030712;
+      --surface:  #0d1117;
+      --border:   #1e2d3d;
+      --accent:   #00e5ff;
+      --accent2:  #ff1744;
+      --accent3:  #00e676;
+      --muted:    #3d5068;
+      --text:     #c9d1d9;
+      --subtext:  #6e7f8d;
+      --mono:     'Share Tech Mono', monospace;
+      --display:  'Rajdhani', sans-serif;
+      --body:     'Inter', sans-serif;
+      --scan-dur: 3s;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--body);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Animated scanline overlay */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background: repeating-linear-gradient(
+        to bottom,
+        transparent 0px,
+        transparent 3px,
+        rgba(0,229,255,.018) 3px,
+        rgba(0,229,255,.018) 4px
+      );
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* Moving scan bar */
+    body::after {
+      content: '';
+      position: fixed;
+      left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      animation: scanbar var(--scan-dur) linear infinite;
+      z-index: 10000;
+      pointer-events: none;
+      opacity: 0.6;
+    }
+
+    @keyframes scanbar {
+      0%   { top: -3px; }
+      100% { top: 100vh; }
+    }
+
+    /* Noise grain */
+    .grain {
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 9998;
+      opacity: 0.3;
+    }
+
+    /* ── Typography ─────────────────────────────────────────────────────── */
+    .font-display { font-family: var(--display); }
+    .font-mono    { font-family: var(--mono); }
+
+    /* ── Glow utilities ─────────────────────────────────────────────────── */
+    .glow-cyan  { text-shadow: 0 0 14px var(--accent), 0 0 28px rgba(0,229,255,.3); }
+    .glow-red   { text-shadow: 0 0 14px var(--accent2); }
+    .glow-green { text-shadow: 0 0 14px var(--accent3); }
+    .box-glow   { box-shadow: 0 0 0 1px var(--border), 0 0 24px rgba(0,229,255,.06); }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    header {
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(0,229,255,.04) 0%, transparent 100%);
+      padding: 1.25rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky; top: 0; z-index: 100;
+      backdrop-filter: blur(8px);
+    }
+
+    .logo-bracket {
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 1.5rem;
+      margin: 0 .25rem;
+    }
+
+    .pulse-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--accent3);
+      box-shadow: 0 0 8px var(--accent3);
+      animation: pulse-dot 1.4s ease-in-out infinite;
+      display: inline-block;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: .4; transform: scale(.7); }
+    }
+
+    /* ── Stat cards ─────────────────────────────────────────────────────── */
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      position: relative;
+      overflow: hidden;
+      transition: border-color .2s, box-shadow .2s;
+    }
+    .stat-card:hover {
+      border-color: var(--accent);
+      box-shadow: 0 0 24px rgba(0,229,255,.1);
+    }
+    .stat-card::before {
+      content: '';
+      position: absolute; top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--card-accent, var(--accent)), transparent);
+    }
+
+    .stat-value {
+      font-family: var(--mono);
+      font-size: 2.25rem;
+      line-height: 1;
+      color: #fff;
+    }
+
+    /* ── Table ──────────────────────────────────────────────────────────── */
+    .dns-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+    }
+
+    .dns-table th {
+      font-family: var(--display);
+      font-weight: 600;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--subtext);
+      padding: .75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      background: rgba(0,0,0,.3);
+      position: sticky; top: 0;
+    }
+
+    .dns-table td {
+      padding: .6rem 1rem;
+      border-bottom: 1px solid rgba(30,45,61,.5);
+      vertical-align: middle;
+      color: var(--text);
+      transition: background .15s;
+    }
+
+    .dns-table tr:hover td { background: rgba(0,229,255,.03); }
+
+    .dns-table tr.row-new td {
+      animation: row-flash .8s ease-out forwards;
+    }
+
+    @keyframes row-flash {
+      0%   { background: rgba(255,23,68,.15); }
+      100% { background: transparent; }
+    }
+
+    /* ── Status badges ──────────────────────────────────────────────────── */
+    .badge {
+      display: inline-flex; align-items: center; gap: .35rem;
+      padding: .2rem .65rem;
+      border-radius: 9999px;
+      font-family: var(--display);
+      font-weight: 600;
+      font-size: .7rem;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+
+    .badge-clean {
+      background: rgba(0,230,118,.12);
+      color: var(--accent3);
+      border: 1px solid rgba(0,230,118,.3);
+    }
+
+    .badge-blocked {
+      background: rgba(255,23,68,.12);
+      color: var(--accent2);
+      border: 1px solid rgba(255,23,68,.3);
+      box-shadow: 0 0 8px rgba(255,23,68,.15);
+    }
+
+    .badge-dot {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    /* ── Section header ─────────────────────────────────────────────────── */
+    .section-title {
+      font-family: var(--display);
+      font-weight: 700;
+      font-size: 1.1rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .section-corner {
+      border-top: 2px solid var(--border);
+      border-left: 2px solid var(--border);
+      width: 10px; height: 10px;
+      display: inline-block;
+      margin-right: .5rem;
+      vertical-align: middle;
+    }
+
+    /* ── Toast notifications ─────────────────────────────────────────────── */
+    #toast-container {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      z-index: 9000;
+      display: flex;
+      flex-direction: column-reverse;
+      gap: .75rem;
+      max-width: 380px;
+    }
+
+    .toast {
+      background: #0d1117;
+      border: 1px solid var(--accent2);
+      border-left: 4px solid var(--accent2);
+      border-radius: 6px;
+      padding: .9rem 1.1rem;
+      box-shadow: 0 0 32px rgba(255,23,68,.25), 0 4px 20px rgba(0,0,0,.5);
+      animation: toast-in .35s cubic-bezier(.34,1.56,.64,1) forwards;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .toast::after {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 0;
+      height: 2px;
+      background: var(--accent2);
+      width: 100%;
+      transform-origin: left;
+      animation: toast-timer 5s linear forwards;
+    }
+
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateX(120px) scale(.9); }
+      to   { opacity: 1; transform: translateX(0) scale(1); }
+    }
+
+    @keyframes toast-out {
+      from { opacity: 1; transform: translateX(0); max-height: 200px; margin-bottom: 0; }
+      to   { opacity: 0; transform: translateX(120px); max-height: 0;  margin-bottom: -12px; }
+    }
+
+    @keyframes toast-timer {
+      from { transform: scaleX(1); }
+      to   { transform: scaleX(0); }
+    }
+
+    .toast-title {
+      font-family: var(--display);
+      font-weight: 700;
+      font-size: .85rem;
+      color: var(--accent2);
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      margin-bottom: .25rem;
+    }
+
+    .toast-domain {
+      font-family: var(--mono);
+      font-size: .75rem;
+      color: var(--text);
+      word-break: break-all;
+    }
+
+    .toast-meta {
+      font-family: var(--mono);
+      font-size: .68rem;
+      color: var(--subtext);
+      margin-top: .35rem;
+    }
+
+    /* ── Scrollable table wrapper ────────────────────────────────────────── */
+    .table-scroll {
+      max-height: 480px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .table-scroll::-webkit-scrollbar { width: 5px; }
+    .table-scroll::-webkit-scrollbar-track { background: transparent; }
+    .table-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+
+    /* ── Animated counter ────────────────────────────────────────────────── */
+    .counter-flip {
+      display: inline-block;
+      transition: transform .25s, opacity .25s;
+    }
+
+    .counter-flip.updating {
+      transform: translateY(-8px);
+      opacity: 0;
+    }
+
+    /* ── Empty state ─────────────────────────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: 3rem 1rem;
+      color: var(--subtext);
+      font-family: var(--mono);
+      font-size: .8rem;
+    }
+
+    /* ── Radar icon animation ────────────────────────────────────────────── */
+    @keyframes radar-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .radar-arm {
+      transform-origin: 50% 50%;
+      animation: radar-spin 2.5s linear infinite;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="grain"></div>
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <header>
+    <div class="flex items-center gap-3">
+      <!-- Mini SVG radar logo -->
+      <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="18" cy="18" r="17" stroke="#00e5ff" stroke-width="1" opacity=".3"/>
+        <circle cx="18" cy="18" r="12" stroke="#00e5ff" stroke-width="1" opacity=".3"/>
+        <circle cx="18" cy="18" r="6"  stroke="#00e5ff" stroke-width="1" opacity=".3"/>
+        <line x1="18" y1="18" x2="18" y2="2" stroke="#00e5ff" stroke-width="1.5" stroke-linecap="round"
+              class="radar-arm" style="transform-origin:18px 18px"/>
+        <circle cx="18" cy="18" r="2" fill="#00e5ff"/>
+      </svg>
+
+      <div>
+        <div class="flex items-center gap-1">
+          <span class="logo-bracket">[</span>
+          <span class="font-display text-white font-bold text-xl tracking-widest">DNS SHIELD</span>
+          <span class="logo-bracket">]</span>
+        </div>
+        <p class="text-xs font-mono text-gray-500 tracking-widest">NETWORK INTRUSION DETECTION</p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-2 text-xs font-mono text-gray-400">
+        <span class="pulse-dot"></span>
+        <span id="sniffer-status">SNIFFER ACTIVE</span>
+      </div>
+      <div class="text-xs font-mono text-gray-600" id="last-updated">—</div>
+    </div>
+  </header>
+
+  <!-- ── Main content ────────────────────────────────────────────────────── -->
+  <main class="max-w-screen-xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+
+    <!-- Analytics row -->
+    <section>
+      <div class="flex items-center gap-2 mb-4">
+        <span class="section-corner"></span>
+        <span class="section-title">Live Analytics</span>
+      </div>
+
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <!-- Total -->
+        <div class="stat-card" style="--card-accent: #00e5ff">
+          <p class="text-xs font-display font-semibold tracking-widest text-gray-500 uppercase mb-1">Total Queries</p>
+          <p class="stat-value glow-cyan"><span id="stat-total" class="counter-flip">0</span></p>
+          <p class="text-xs font-mono text-gray-600 mt-1">packets captured</p>
+        </div>
+
+        <!-- Blocked -->
+        <div class="stat-card" style="--card-accent: #ff1744">
+          <p class="text-xs font-display font-semibold tracking-widest text-gray-500 uppercase mb-1">Blocked</p>
+          <p class="stat-value glow-red"><span id="stat-blocked" class="counter-flip">0</span></p>
+          <p class="text-xs font-mono text-gray-600 mt-1">anomalies detected</p>
+        </div>
+
+        <!-- Clean -->
+        <div class="stat-card" style="--card-accent: #00e676">
+          <p class="text-xs font-display font-semibold tracking-widest text-gray-500 uppercase mb-1">Clean</p>
+          <p class="stat-value glow-green"><span id="stat-clean" class="counter-flip">0</span></p>
+          <p class="text-xs font-mono text-gray-600 mt-1">benign queries</p>
+        </div>
+
+        <!-- Block rate -->
+        <div class="stat-card" style="--card-accent: #ffd600">
+          <p class="text-xs font-display font-semibold tracking-widest text-gray-500 uppercase mb-1">Block Rate</p>
+          <p class="stat-value" style="color:#ffd600;text-shadow:0 0 14px #ffd600"><span id="stat-rate" class="counter-flip">0.0</span>%</p>
+          <p class="text-xs font-mono text-gray-600 mt-1">of all queries</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Query log table -->
+    <section>
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-2">
+          <span class="section-corner"></span>
+          <span class="section-title">Query Log</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <label class="flex items-center gap-2 text-xs font-mono text-gray-500 cursor-pointer select-none">
+            <input type="checkbox" id="filter-blocked" class="accent-red-500"> Show blocked only
+          </label>
+          <button onclick="clearTable()"
+                  class="text-xs font-mono text-gray-600 hover:text-gray-300 transition px-2 py-1
+                         border border-gray-700 rounded hover:border-gray-500">
+            CLEAR
+          </button>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-gray-800 overflow-hidden box-glow">
+        <div class="table-scroll">
+          <table class="dns-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Domain</th>
+                <th>Length</th>
+                <th>Entropy</th>
+                <th>Status</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody id="log-tbody">
+              <tr>
+                <td colspan="6" class="empty-state">
+                  Waiting for DNS traffic…<br>
+                  <span style="color:#1e2d3d">▌</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ── Toast container ────────────────────────────────────────────────── -->
+  <div id="toast-container" aria-live="polite"></div>
+
+  <!-- ── JavaScript ──────────────────────────────────────────────────────── -->
+  <script>
+  (() => {
+    'use strict';
+
+    // ── State ──────────────────────────────────────────────────────────────
+    const MAX_ROWS      = 200;
+    const POLL_INTERVAL = 3000;   // ms
+
+    let rows        = [];   // [{domain, length, entropy, status, timestamp}, …]
+    let seenDomains = new Set();  // track already-shown entries
+    let lastTotalBlocked = 0;
+    let filterBlocked    = false;
+
+    // ── DOM refs ───────────────────────────────────────────────────────────
+    const tbody      = document.getElementById('log-tbody');
+    const statTotal  = document.getElementById('stat-total');
+    const statBlocked= document.getElementById('stat-blocked');
+    const statClean  = document.getElementById('stat-clean');
+    const statRate   = document.getElementById('stat-rate');
+    const lastUpdate = document.getElementById('last-updated');
+    const filterChk  = document.getElementById('filter-blocked');
+
+    filterChk.addEventListener('change', () => {
+      filterBlocked = filterChk.checked;
+      renderTable();
+    });
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+    function fmtTime(iso) {
+      try {
+        const d = new Date(iso);
+        return d.toLocaleTimeString('en-GB', { hour12: false });
+      } catch { return iso; }
+    }
+
+    function truncateDomain(d, max = 58) {
+      return d.length > max ? '…' + d.slice(-max + 1) : d;
+    }
+
+    function rowKey(entry) {
+      return `${entry.domain}|${entry.timestamp}`;
+    }
+
+    // ── Animated counter ────────────────────────────────────────────────
+    function setCounter(el, val) {
+      if (el.textContent === String(val)) return;
+      el.classList.add('updating');
+      setTimeout(() => {
+        el.textContent = val;
+        el.classList.remove('updating');
+      }, 200);
+    }
+
+    // ── Update analytics cards ─────────────────────────────────────────
+    function updateStats(data) {
+      const total   = data.length;
+      const blocked = data.filter(r => r.status === 'blocked').length;
+      const clean   = total - blocked;
+      const rate    = total > 0 ? ((blocked / total) * 100).toFixed(1) : '0.0';
+
+      setCounter(statTotal,   total);
+      setCounter(statBlocked, blocked);
+      setCounter(statClean,   clean);
+      setCounter(statRate,    rate);
+
+      lastUpdate.textContent = 'updated ' + new Date().toLocaleTimeString('en-GB', {hour12:false});
+    }
+
+    // ── Render table ───────────────────────────────────────────────────
+    function renderTable() {
+      const display = filterBlocked
+        ? rows.filter(r => r.status === 'blocked')
+        : rows;
+
+      if (display.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" class="empty-state">
+          No data yet — DNS traffic will appear here.<br>
+          <span style="color:#1e2d3d">▌</span>
+        </td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = display.slice(0, MAX_ROWS).map((r, i) => {
+        const isBlocked = r.status === 'blocked';
+        const badge = isBlocked
+          ? `<span class="badge badge-blocked"><span class="badge-dot"></span>BLOCKED</span>`
+          : `<span class="badge badge-clean"><span class="badge-dot"></span>CLEAN</span>`;
+
+        const rowClass = r._new ? 'row-new' : '';
+        return `<tr class="${rowClass}" data-key="${rowKey(r)}">
+          <td class="text-gray-600">${i + 1}</td>
+          <td title="${r.domain}" style="${isBlocked ? 'color:#ff6b6b' : 'color:#a8d8ea'}">
+            ${truncateDomain(r.domain)}
+          </td>
+          <td>${r.length}</td>
+          <td>${typeof r.entropy === 'number' ? r.entropy.toFixed(4) : r.entropy}</td>
+          <td>${badge}</td>
+          <td class="text-gray-500">${fmtTime(r.timestamp)}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    // ── Toast notification ─────────────────────────────────────────────
+    function showToast(entry) {
+      const container = document.getElementById('toast-container');
+
+      const toast = document.createElement('div');
+      toast.className = 'toast';
+      toast.innerHTML = `
+        <div class="toast-title">⚠ DNS Tunnel Detected</div>
+        <div class="toast-domain">${entry.domain}</div>
+        <div class="toast-meta">
+          len=${entry.length} &nbsp;|&nbsp; entropy=${
+            typeof entry.entropy === 'number' ? entry.entropy.toFixed(4) : entry.entropy
+          } &nbsp;|&nbsp; ${fmtTime(entry.timestamp)}
+        </div>
+      `;
+
+      container.appendChild(toast);
+
+      // Auto-dismiss after 5 s
+      setTimeout(() => {
+        toast.style.animation = 'toast-out .4s ease-in forwards';
+        setTimeout(() => toast.remove(), 400);
+      }, 5000);
+    }
+
+    // ── Main poll loop ─────────────────────────────────────────────────
+    async function poll() {
+      try {
+        const res = await fetch('/logs?limit=200');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // Detect new blocked entries for toasts
+        const newBlockedEntries = data.filter(
+          r => r.status === 'blocked' && !seenDomains.has(rowKey(r))
+        );
+
+        // Mark new rows
+        const newKeys = new Set(newBlockedEntries.map(rowKey));
+        rows = data.map(r => ({ ...r, _new: newKeys.has(rowKey(r)) }));
+
+        // Update seen set
+        data.forEach(r => seenDomains.add(rowKey(r)));
+
+        // Fire toasts for new detections (limit to 3 at a time)
+        newBlockedEntries.slice(0, 3).forEach(showToast);
+
+        updateStats(data);
+        renderTable();
+
+      } catch (err) {
+        console.warn('[DNS Shield] Poll error:', err);
+      }
+    }
+
+    // ── Clear table ────────────────────────────────────────────────────
+    window.clearTable = function () {
+      rows = [];
+      seenDomains.clear();
+      renderTable();
+      [statTotal, statBlocked, statClean].forEach(el => el.textContent = '0');
+      statRate.textContent = '0.0';
+    };
+
+    // ── Init ───────────────────────────────────────────────────────────
+    poll();
+    setInterval(poll, POLL_INTERVAL);
+
+  })();
+  </script>
+</body>
+</html>
